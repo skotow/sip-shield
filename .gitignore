@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+.preview/
+kamailio/candidates/*/
+kamailio/reload/*.json
+kamailio/reload/.*.tmp

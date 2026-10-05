@@ -1,0 +1,37 @@
+# Standalone development Compose: docker compose -f docker-compose.dev.yml up --build
+services:
+  postgres:
+    extends: {file: docker-compose.yml, service: postgres}
+  redis:
+    extends: {file: docker-compose.yml, service: redis}
+  api:
+    extends: {file: docker-compose.yml, service: api}
+    image: sipshield-api:dev
+    pull_policy: build
+    build: ./api
+  dashboard:
+    extends: {file: docker-compose.yml, service: dashboard}
+    image: sipshield-dashboard:dev
+    pull_policy: build
+    build: ./dashboard
+  kamailio:
+    extends: {file: docker-compose.yml, service: kamailio}
+    image: sipshield-kamailio:dev
+    pull_policy: build
+    build: ./kamailio
+  reloader:
+    extends: {file: docker-compose.yml, service: reloader}
+    image: sipshield-worker:dev
+    pull_policy: build
+    build: ./kamailio
+  collector:
+    extends: {file: docker-compose.yml, service: collector}
+    image: sipshield-worker:dev
+    pull_policy: build
+    build: ./kamailio
+volumes:
+  postgres-data:
+  redis-data:
+  kamailio-generated:
+  runtime-rpc:
+  sip-logs:

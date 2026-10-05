@@ -1,0 +1,112 @@
+x-database-environment: &database
+  PGHOST: postgres
+  PGPORT: '5432'
+  PGDATABASE: ${POSTGRES_DB:-sipshield}
+  PGUSER: ${POSTGRES_USER:-sipshield}
+  PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env or run ./install.sh}
+  DATABASE_URL: ${DATABASE_URL:-}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sipshield}
+      POSTGRES_USER: ${POSTGRES_USER:-sipshield}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./db/runtime.sql:/docker-entrypoint-initdb.d/runtime.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: [redis-server, --appendonly, 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  api:
+    image: ghcr.io/${GHCR_NAMESPACE:-skotow}/sip-shield-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      <<: *database
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env or run ./install.sh}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env or run ./install.sh}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    ports:
+      - '${MANAGEMENT_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8080}:8080'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  dashboard:
+    image: ghcr.io/${GHCR_NAMESPACE:-skotow}/sip-shield-dashboard:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - '${MANAGEMENT_BIND_ADDRESS:-127.0.0.1}:${DASHBOARD_PORT:-3000}:80'
+    depends_on:
+      - api
+  kamailio:
+    image: ghcr.io/${GHCR_NAMESPACE:-skotow}/sip-shield-kamailio:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    volumes:
+      - ./kamailio/kamailio.cfg:/opt/sipshield/kamailio.cfg:ro
+      - kamailio-generated:/generated
+      - runtime-rpc:/rpc
+      - sip-logs:/logs
+    environment:
+      <<: *database
+      SIP_BACKEND_HOST: ${SIP_BACKEND_HOST:-host.docker.internal}
+      SIP_BACKEND_PORT: ${SIP_BACKEND_PORT:-5070}
+      SIP_ADVERTISED_HOST: ${SIP_ADVERTISED_HOST:-127.0.0.1}
+      SIP_LISTEN_PORT: ${SIP_LISTEN_PORT:-5060}
+      KAMAILIO_RENDERED_CONFIG: /generated/kamailio.cfg
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - '${SIP_BIND_ADDRESS:-127.0.0.1}:${SIP_LISTEN_PORT:-5060}:5060/udp'
+      - '${SIP_BIND_ADDRESS:-127.0.0.1}:${SIP_LISTEN_PORT:-5060}:5060/tcp'
+  reloader:
+    image: ghcr.io/${GHCR_NAMESPACE:-skotow}/sip-shield-worker:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    entrypoint: [python3, /opt/sipshield/table_worker.py]
+    volumes:
+      - runtime-rpc:/rpc
+    environment: *database
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      - kamailio
+  collector:
+    image: ghcr.io/${GHCR_NAMESPACE:-skotow}/sip-shield-worker:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    entrypoint: [python3, /opt/sipshield/collector.py]
+    environment: *database
+    volumes:
+      - sip-logs:/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+volumes:
+  postgres-data:
+  redis-data:
+  kamailio-generated:
+  runtime-rpc:
+  sip-logs:
