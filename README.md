@@ -1,3 +1,6 @@
+<img width="1907" height="712" alt="image" src="https://github.com/user-attachments/assets/b75efed0-bb7e-4e0a-84ac-d2b903e5fcdf" />
+
+
 # SIP Shield — production-lite runtime
 
 SIP client/carrier → Kamailio → customer PBX. PostgreSQL stores management data and runtime tables. SIP requests use only Kamailio's in-memory caches: no API, Redis, or SQL query in the request path. RTPengine is deliberately outside this phase.
