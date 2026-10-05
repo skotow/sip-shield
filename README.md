@@ -98,6 +98,89 @@ A customer domain matches the SIP request-URI domain, case-insensitively. Adding
 
 SIP ports remain loopback-bound for local tests. For LAN/public deployment set SIP_BIND_ADDRESS=0.0.0.0, set SIP_ADVERTISED_HOST to a reachable address, and configure firewall/NAT. Media still flows directly between client and PBX; registration success does not guarantee working audio.
 
+## Test locally without a VPS or public domain
+
+You can test on your own computer with a softphone and a local/LAN SIP PBX. A hosts-file entry makes a test domain resolve to SIP Shield without purchasing a domain or creating public DNS records. **You still need a reachable SIP registrar/PBX and valid extension credentials:** SIP Shield forwards registration requests; it does not create SIP accounts or register users itself.
+
+### 1. Start SIP Shield on your computer
+
+Install as described above, or use the development Compose file for local source builds. Keep these values in `.env` for a softphone on the same computer:
+
+```env
+SIP_BIND_ADDRESS=127.0.0.1
+SIP_ADVERTISED_HOST=127.0.0.1
+SIP_LISTEN_PORT=5060
+```
+
+Open the dashboard at `http://localhost:3000` (or your configured dashboard port). If you change `.env`, recreate the affected service with `docker compose up -d`, or `docker compose -f docker-compose.dev.yml up -d` for development. Make sure your PBX and softphone do not also bind the host's SIP port 5060. For example, run the local PBX on 5070 and let the softphone choose an automatic local port, or use 5062.
+
+### 2. Point a test domain to SIP Shield in the hosts file
+
+Edit the hosts file **on the computer running the softphone**, using administrator/root permissions:
+
+| Operating system | Hosts file |
+|---|---|
+| Windows | `C:\Windows\System32\drivers\etc\hosts` (open your editor as Administrator) |
+| Linux / macOS | `/etc/hosts` (for example, `sudo nano /etc/hosts`) |
+
+Add this line for SIP Shield running on the same computer:
+
+```text
+127.0.0.1 sipshield.test
+```
+
+Save the file (on Windows, keep the filename `hosts`, without a `.txt` extension), then restart the softphone to clear its cached lookup. This entry only affects that computer; it does not create public DNS. A hosts file maps a hostname to an IP, not a port.
+
+### 3. Add the matching customer and real backend
+
+In **Customers**, add:
+
+| Field | Example |
+|---|---|
+| Name | Local test PBX |
+| Domain | `sipshield.test` |
+| Backend host | `host.docker.internal` for a PBX on the Docker host, or your PBX's LAN IP |
+| Backend port | `5070` for this example; use the port your PBX actually listens on |
+| Enabled | Yes |
+
+The backend must be listening on an interface reachable from the Kamailio container, not only the host's loopback interface. Do not use `127.0.0.1` as the backend host for a PBX outside the container; it would point back into Kamailio's container. Click **Apply SIP Config** and wait for a successful runtime update.
+
+**Configure the PBX to accept the SIP domain `sipshield.test`.** Routing a domain through SIP Shield does not make the PBX recognize that domain. If an existing PBX requires its original SIP domain, keep that original domain in the customer row and softphone account, and set the softphone's outbound proxy to `sipshield.test:5060`. The hosts entry then resolves the proxy while the SIP Request-URI retains the backend's required domain. Do not point the test hostname at the backend directly; that would bypass SIP Shield.
+
+### 4. Register from your softphone
+
+For a PBX configured to accept `sipshield.test`, use:
+
+| Softphone setting | Value |
+|---|---|
+| SIP domain / account server | `sipshield.test` |
+| Server port | `5060` (or your `SIP_LISTEN_PORT`) |
+| Transport | UDP or TCP; TLS is not configured in this local setup |
+| Username / extension | A real extension configured on your PBX, for example `100` |
+| Authentication username | The authentication ID required by your PBX |
+| Password | That extension's PBX password, not the SIP Shield dashboard password |
+| Outbound proxy, if required by the softphone | `sipshield.test:5060` |
+
+The expected path is **softphone → `sipshield.test` → SIP Shield → backend PBX**. A backend `401 Unauthorized` authentication challenge can be normal; successful registration typically finishes with a backend `200 OK`. In **Events / SIP Explorer**, inspect REGISTER requests and backend replies. A gateway **Allowed** decision only means forwarding was permitted; it does not prove the PBX accepted registration. A backend `403 URI domain not configured locally, relaying forbidden` means you need to correct the backend domain/account configuration.
+
+Inspect logs with:
+
+```bash
+docker compose logs -f kamailio collector reloader
+```
+
+### Testing from another computer on your LAN
+
+Use the SIP Shield computer's LAN IP instead of loopback, for example:
+
+```text
+192.168.1.50 sipshield.test
+```
+
+Add that hosts entry on each softphone computer. On the SIP Shield computer set `SIP_BIND_ADDRESS=0.0.0.0` and `SIP_ADVERTISED_HOST=192.168.1.50`, then recreate Kamailio. Permit the chosen SIP UDP/TCP port through the host firewall only for the LAN clients you intend to test. API/dashboard can remain localhost-bound. Other devices' `127.0.0.1` refers to themselves, not your SIP Shield computer.
+
+This tests SIP registration, filtering, and forwarding. RTP/media still flows directly between the softphone and PBX; this guide does not configure a media relay or guarantee working audio. Remove the test hosts entry when finished, especially if you temporarily overrode an existing hostname.
+
 ## Original source visibility
 
 Forwarded backend requests contain fresh `X-SIPShield-Source-IP`, `X-SIPShield-Source-Port`, `X-SIPShield-Transport`, and `X-SIPShield-Decision: allowed` headers. `X-SIPShield-Customer` contains the matched customer domain when one exists; unmatched fallback requests omit it. `X-Original-Source-IP` is a compatibility alias enabled by default. All inbound `X-SIPShield-*` and `X-Original-Source-IP` headers are removed before fresh values are appended, including duplicates and case variations. Blocked replies and locally answered OPTIONS do not get these headers. Reverse dialog requests toward clients are not enriched.
@@ -152,6 +235,22 @@ Generation selectors are persisted for warm restarts. The API's source rows are 
 PostgreSQL/API/Redis downtime does not stop existing cached forwarding/filtering. The worker retries database availability; reload failures preserve the active generation. New management changes cannot be saved without PostgreSQL. Kamailio restart during a database outage is not supported: this is warm-runtime resilience, not offline cold boot or HA. Dispatcher destinations should use reliable DNS; this architecture does not eliminate DNS dependence.
 
 ## IP and other security rules
+
+### Bulk destination-prefix CSV import
+
+In **Rules → Destination prefixes**, download the CSV template, choose a UTF-8 comma-separated CSV file and a scope (global or one customer), then click **Import CSV**. The required header is `prefix`; `reason` is optional:
+
+```csv
+prefix,reason
+00900,Premium-rate destinations
++1900,Restricted destinations
+```
+
+Keep spreadsheet prefix columns formatted as text to preserve leading zeros and `+`. Valid prefixes contain 1–64 digits or `+`, `*`, `#`; reasons are at most 512 characters. Quoted commas/newlines and UTF-8 BOM are supported. Each upload is limited to 1,000 data records / 1 MiB. All records must be valid before anything is saved. Duplicates within the upload or existing rules in the same scope are skipped; existing reasons are not overwritten. The first occurrence wins within a file. Prefixes in different scopes remain separate rules.
+
+Import automatically queues one runtime-table update and displays its outcome. Saved does not mean active until that update succeeds; if it fails, previous active policies remain in use. Correct the reported issue and retry **Apply SIP Config**. An all-duplicate upload queues no update. Disabled customers' rules remain inactive until that customer is enabled.
+
+Authenticated API: `POST /api/rules/prefixes/import` with `Content-Type: text/csv` and CSV as the raw body; optional `?customer_id=<id>` selects a customer, otherwise the import is global. Response includes `imported`, `skipped`, and `reload_id` for polling `/api/reload-status?id=...`. CSV imports and their reload request commit together. Verify against a local test stack with `node scripts/prefix-import-smoke.mjs` (requires free UDP port 5078).
 
 - Exact IPv4/IPv6 and subnet CIDRs are supported. `/0` networks are represented by two `/1` entries because permissions treats mask 0 as a host mask.
 - Global rules apply to all requests. Customer rules apply to the request-URI domain's active customer. Domain scope is not authenticated tenant identity; an in-dialog URI may use another domain.

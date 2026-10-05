@@ -29,6 +29,7 @@ app.use('/api', events, sipSearch, alerts, config, defense);
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((error, req, res, next) => {
   const badRequest = error instanceof SyntaxError || !error.code || ['22P02','23503','23514','22007','22008'].includes(error.code);
+  if(error.type==='entity.too.large')return res.status(413).json({error:'Upload is too large. CSV files must be at most 1 MiB.'});
   const status = error.code === '23505' ? 409 : badRequest ? 400 : 500;
   if (status === 500) console.error('Database request failed:', error.code);
   res.status(status).json({ error: status === 409 ? 'Value already exists' : error.code ? 'Invalid request or unavailable database' : error.message });
