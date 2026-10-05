@@ -91,7 +91,11 @@ Track script executable modes once before committing from Windows: `git update-i
 
 ## Support
 
-GitHub Sponsors: `https://github.com/sponsors/skotow` (placeholder). Custom donations: `https://revolut.me/nazar333h`. Commercial installation/support contact: `support@tabydial.com`.
+GitHub Sponsors: [Sponsor SIP Shield](https://github.com/sponsors/skotow)
+
+Custom donations: [Donate via Revolut](https://revolut.me/nazar333h)
+
+Commercial installation/support: [support@tabydial.com](mailto:support@tabydial.com)
 
 ## Backend and registration
 
